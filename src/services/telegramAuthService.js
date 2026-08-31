@@ -1,6 +1,7 @@
 /**
  * Global Realtime Telegram Messenger Auth Service for Sprint Marketplace.
  * Works seamlessly across Localhost, Google Cloud Hosting, iOS Safari, Android Chrome, and Desktop.
+ * Uses no-cache headers to prevent mobile browsers (Safari/Chrome) from serving stale auth states.
  */
 
 const BOT_USERNAME = "SprintAuthBot";
@@ -17,9 +18,13 @@ class TelegramMessengerAuthService {
   async createCloudSession() {
     try {
       const localId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const res = await fetch(CLOUD_API_URL, {
+      const res = await fetch(`${CLOUD_API_URL}?_t=${Date.now()}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache'
+        },
+        cache: 'no-store',
         body: JSON.stringify({
           name: 'sprint_auth',
           data: {
@@ -42,6 +47,8 @@ class TelegramMessengerAuthService {
         } catch {
           // ignore
         }
+
+        console.log(`[AUTH SESSION CREATED] ID: ${cloudId} | Link: ${telegramDeepLink}`);
 
         return {
           success: true,
@@ -67,17 +74,25 @@ class TelegramMessengerAuthService {
   }
 
   /**
-   * Polls global cloud session status
+   * Polls global cloud session status with strict cache-busting
    */
   async checkSessionStatus(sessionId) {
     if (!sessionId) return { authenticated: false };
 
     try {
-      // 1. Check Global Cloud API first (works everywhere: Google Cloud, iPhone, Android, PC)
-      const res = await fetch(`${CLOUD_API_URL}/${sessionId}`);
+      // 1. Check Global Cloud API with no-cache and timestamp query param
+      const res = await fetch(`${CLOUD_API_URL}/${sessionId}?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
+
       if (res.ok) {
         const obj = await res.json();
         if (obj?.data?.authenticated) {
+          console.log(`[AUTH VERIFIED VIA CLOUD] User: ${obj.data.userName} | Phone: ${obj.data.phone}`);
           return {
             authenticated: true,
             userName: obj.data.userName,
@@ -85,13 +100,15 @@ class TelegramMessengerAuthService {
           };
         }
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn("Cloud poll error:", err);
     }
 
     try {
       // 2. Local fallback check for localhost development
-      const localRes = await fetch(`/telegram_auth_status.json?t=${Date.now()}`);
+      const localRes = await fetch(`/telegram_auth_status.json?_t=${Date.now()}`, {
+        cache: 'no-store'
+      });
       if (localRes.ok) {
         const localData = await localRes.json();
         if (localData[sessionId]?.authenticated) {
