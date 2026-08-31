@@ -1,6 +1,6 @@
 /**
  * Global Realtime Telegram Messenger Auth Service for Sprint Marketplace.
- * Works seamlessly across Localhost, Google Hosting, Firebase, Vercel, and Mobile devices.
+ * Works seamlessly across Localhost, Google Cloud Hosting, iOS Safari, Android Chrome, and Desktop.
  */
 
 const BOT_USERNAME = "SprintAuthBot";
@@ -12,7 +12,7 @@ class TelegramMessengerAuthService {
   }
 
   /**
-   * Creates a live cloud session accessible globally from any hosting or mobile device
+   * Creates a live cloud session with both Web and Native Mobile Deep Links
    */
   async createCloudSession() {
     try {
@@ -34,12 +34,21 @@ class TelegramMessengerAuthService {
         const cloudObj = await res.json();
         const cloudId = cloudObj.id;
         const telegramDeepLink = `https://t.me/${BOT_USERNAME}?start=auth_${cloudId}`;
+        const telegramNativeLink = `tg://resolve?domain=${BOT_USERNAME}&start=auth_${cloudId}`;
+
+        // Cache in localStorage for mobile browser background recovery
+        try {
+          localStorage.setItem('sprint_pending_session_id', cloudId);
+        } catch {
+          // ignore
+        }
 
         return {
           success: true,
           sessionId: cloudId,
           botUsername: BOT_USERNAME,
-          telegramDeepLink
+          telegramDeepLink,
+          telegramNativeLink
         };
       }
     } catch (e) {
@@ -52,7 +61,8 @@ class TelegramMessengerAuthService {
       success: true,
       sessionId: fallbackId,
       botUsername: BOT_USERNAME,
-      telegramDeepLink: `https://t.me/${BOT_USERNAME}?start=auth_${fallbackId}`
+      telegramDeepLink: `https://t.me/${BOT_USERNAME}?start=auth_${fallbackId}`,
+      telegramNativeLink: `tg://resolve?domain=${BOT_USERNAME}&start=auth_${fallbackId}`
     };
   }
 
@@ -60,8 +70,10 @@ class TelegramMessengerAuthService {
    * Polls global cloud session status
    */
   async checkSessionStatus(sessionId) {
+    if (!sessionId) return { authenticated: false };
+
     try {
-      // 1. Check Cloud API first (works on Google / production / any device)
+      // 1. Check Global Cloud API first (works everywhere: Google Cloud, iPhone, Android, PC)
       const res = await fetch(`${CLOUD_API_URL}/${sessionId}`);
       if (res.ok) {
         const obj = await res.json();
@@ -78,7 +90,7 @@ class TelegramMessengerAuthService {
     }
 
     try {
-      // 2. Local fallback check
+      // 2. Local fallback check for localhost development
       const localRes = await fetch(`/telegram_auth_status.json?t=${Date.now()}`);
       if (localRes.ok) {
         const localData = await localRes.json();

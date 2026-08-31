@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   X, 
   Send, 
@@ -8,6 +8,7 @@ import {
   Loader2,
   Crown,
   ChevronRight,
+  Smartphone,
   User as UserIcon
 } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
@@ -30,6 +31,7 @@ export const AuthModal = () => {
   const [step, setStep] = useState('initial'); // 'initial' | 'waiting'
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [telegramLink, setTelegramLink] = useState(null);
+  const [telegramNativeLink, setTelegramNativeLink] = useState(null);
   const pollingIntervalRef = useRef(null);
 
   const isRu = language === 'ru';
@@ -53,7 +55,8 @@ export const AuthModal = () => {
       ? "@SprintAuthBot da tilni tanlang, ismingizni yozing va kontaktni yuboring:"
       : "In @SprintAuthBot, choose your language, write your name, and share your contact:",
     
-    btnOpenBot: isRu ? "Открыть @SprintAuthBot" : isUz ? "@SprintAuthBot ni ochish" : "Open @SprintAuthBot",
+    btnOpenBot: isRu ? "Открыть Telegram на телефоне" : isUz ? "Telefonda Telegramni ochish" : "Open Telegram on Phone",
+    btnOpenWeb: isRu ? "Открыть в браузере" : isUz ? "Brauzerda ochish" : "Open in Browser",
     cancel: isRu ? "Отмена" : isUz ? "Bekor qilish" : "Cancel",
     verified: isRu ? "Авторизован через Telegram" : isUz ? "Telegram orqali tasdiqlangan" : "Verified via Telegram",
     creatorBadge: isRu ? "👑 Создатель Sprint" : isUz ? "👑 Sprint Yaratuvchisi" : "👑 Sprint Creator",
@@ -63,37 +66,71 @@ export const AuthModal = () => {
     security: isRu ? "Официальный бот авторизации Sprint Marketplace" : isUz ? "Sprint Marketplace rasmiy avtorizatsiya boti" : "Official Sprint Marketplace Auth Bot"
   };
 
-  // Poll Global Cloud API + Local status
-  useEffect(() => {
-    if (step === 'waiting' && currentSessionId) {
-      const checkAuthStatus = async () => {
+  // Core Auth Verification Check
+  const checkAuthStatus = useCallback(async (sessionIdToCheck) => {
+    const targetSessionId = sessionIdToCheck || currentSessionId;
+    if (!targetSessionId) return;
+
+    try {
+      const sessionData = await telegramAuthService.checkSessionStatus(targetSessionId);
+
+      if (sessionData && sessionData.authenticated) {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+        }
+
+        const cleanPhone = (sessionData.phone || '').replace(/[^\d]/g, '');
+        const isCreatorPhone = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
+        
+        const loggedName = isCreatorPhone ? 'Sprint383' : (sessionData.userName || 'Пользователь');
+        const loggedPhone = sessionData.phone || '+998 94 939 25 21';
+
+        loginUser(loggedPhone, loggedName);
+        setIsAuthOpen(false);
+        setStep('initial');
+        setTelegramLink(null);
+        setTelegramNativeLink(null);
+        setCurrentSessionId(null);
+
         try {
-          const sessionData = await telegramAuthService.checkSessionStatus(currentSessionId);
-
-          if (sessionData && sessionData.authenticated) {
-            clearInterval(pollingIntervalRef.current);
-            
-            const cleanPhone = (sessionData.phone || '').replace(/[^\d]/g, '');
-            const isCreatorPhone = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
-            
-            // Set creator name strictly to Sprint383
-            const loggedName = isCreatorPhone ? 'Sprint383' : (sessionData.userName || 'Пользователь');
-            const loggedPhone = sessionData.phone || '+998 94 939 25 21';
-
-            loginUser(loggedPhone, loggedName);
-            setIsAuthOpen(false);
-            setStep('initial');
-            setTelegramLink(null);
-            setCurrentSessionId(null);
-
-            showToast(isRu ? `Здравствуйте, ${loggedName}!` : `Salom, ${loggedName}!`, "success");
-          }
+          localStorage.removeItem('sprint_pending_session_id');
         } catch {
           // ignore
         }
+
+        showToast(isRu ? `Здравствуйте, ${loggedName}!` : `Salom, ${loggedName}!`, "success");
+      }
+    } catch {
+      // ignore
+    }
+  }, [currentSessionId, isRu, loginUser, setIsAuthOpen, showToast]);
+
+  // Polling Loop + Mobile Visibility/Focus Change detection
+  useEffect(() => {
+    if (step === 'waiting' && currentSessionId) {
+      pollingIntervalRef.current = setInterval(() => checkAuthStatus(currentSessionId), 700);
+
+      // Instant check when user switches back from Telegram app to mobile browser
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          checkAuthStatus(currentSessionId);
+        }
       };
 
-      pollingIntervalRef.current = setInterval(checkAuthStatus, 800);
+      const handleWindowFocus = () => {
+        checkAuthStatus(currentSessionId);
+      };
+
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('focus', handleWindowFocus);
+
+      return () => {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+        }
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('focus', handleWindowFocus);
+      };
     } else {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
@@ -105,7 +142,21 @@ export const AuthModal = () => {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [step, currentSessionId, isRu, isUz, loginUser, setIsAuthOpen, showToast]);
+  }, [step, currentSessionId, checkAuthStatus]);
+
+  // Check cached session on startup for mobile page reload
+  useEffect(() => {
+    if (!user.isLoggedIn) {
+      try {
+        const cached = localStorage.getItem('sprint_pending_session_id');
+        if (cached) {
+          checkAuthStatus(cached);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [user.isLoggedIn, checkAuthStatus]);
 
   if (!isAuthOpen) return null;
 
@@ -114,10 +165,22 @@ export const AuthModal = () => {
       const result = await telegramAuthService.createCloudSession();
       setCurrentSessionId(result.sessionId);
       setTelegramLink(result.telegramDeepLink);
+      setTelegramNativeLink(result.telegramNativeLink);
       setStep('waiting');
 
-      // Open Telegram bot directly
-      window.open(result.telegramDeepLink, '_blank');
+      // Check if mobile device
+      const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(navigator.userAgent);
+      
+      if (isMobile && result.telegramNativeLink) {
+        // On mobile, trigger direct app opening
+        window.location.href = result.telegramNativeLink;
+        setTimeout(() => {
+          window.open(result.telegramDeepLink, '_blank');
+        }, 500);
+      } else {
+        // On desktop, open in new tab
+        window.open(result.telegramDeepLink, '_blank');
+      }
     } catch {
       showToast(isRu ? "Ошибка открытия Telegram" : "Telegram ochishda xatolik", "error");
     }
@@ -127,6 +190,7 @@ export const AuthModal = () => {
     setIsAuthOpen(false);
     setStep('initial');
     setTelegramLink(null);
+    setTelegramNativeLink(null);
     setCurrentSessionId(null);
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -146,7 +210,7 @@ export const AuthModal = () => {
         onClick={handleClose}
       />
 
-      <div className="min-h-full flex items-center justify-center p-4">
+      <div className="min-h-full flex items-center justify-center p-3 sm:p-4">
         <div className="relative bg-white dark:bg-[#1a1a22] rounded-3xl shadow-2xl border border-[#e8e8ed] dark:border-[#2e2e38] w-full max-w-md overflow-hidden z-10 animate-scale-in transition-colors duration-200">
           
           {/* Close Button */}
@@ -248,7 +312,7 @@ export const AuthModal = () => {
               <div className="space-y-4">
                 <button
                   onClick={handleStartTelegram}
-                  className="w-full bg-gradient-to-r from-[#2AABEE] via-[#229ED9] to-[#1c8ec7] hover:brightness-105 active:scale-95 text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-xl shadow-sky-500/25 transition-all"
+                  className="w-full bg-gradient-to-r from-[#2AABEE] via-[#229ED9] to-[#1c8ec7] hover:brightness-105 active:scale-95 text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-xl shadow-sky-500/25 transition-all cursor-pointer"
                 >
                   <Send className="w-5 h-5" />
                   <span>{texts.btnStartTelegram}</span>
@@ -268,11 +332,11 @@ export const AuthModal = () => {
               </div>
             </div>
           ) : (
-            /* Step 2: Animated Spinner + "Ожидание..." */
-            <div className="p-8 text-center space-y-6 animate-fade-in">
+            /* Step 2: Animated Spinner + "Ожидание..." with Mobile 1-Tap Buttons */
+            <div className="p-6 sm:p-8 text-center space-y-6 animate-fade-in">
               
               {/* Circular Loading Spinner */}
-              <div className="flex flex-col items-center justify-center py-4">
+              <div className="flex flex-col items-center justify-center py-3">
                 <div className="relative flex items-center justify-center">
                   {/* Outer pulse ring */}
                   <div className="absolute w-20 h-20 rounded-full border-4 border-sky-400/20 animate-ping"></div>
@@ -288,32 +352,42 @@ export const AuthModal = () => {
                 </p>
               </div>
 
-              {/* Actions: Re-open bot or Cancel */}
-              <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-[#282834]">
+              {/* Mobile Actions: Open Telegram Native App or Web */}
+              <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-[#282834]">
+                {telegramNativeLink && (
+                  <a
+                    href={telegramNativeLink}
+                    className="w-full py-3.5 px-4 bg-gradient-to-r from-[#2AABEE] to-[#229ED9] hover:brightness-105 active:scale-95 text-white rounded-2xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-sky-500/20"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    <span>{texts.btnOpenBot}</span>
+                  </a>
+                )}
+
                 {telegramLink && (
                   <a
                     href={telegramLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full py-3 px-4 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 border border-sky-200 dark:border-sky-800 rounded-2xl text-xs font-bold text-[#229ED9] flex items-center justify-center gap-2 transition-all shadow-xs"
+                    className="w-full py-2.5 px-4 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 border border-sky-200 dark:border-sky-800 rounded-xl text-xs font-bold text-[#229ED9] flex items-center justify-center gap-2 transition-all shadow-xs"
                   >
-                    <Send className="w-4 h-4 text-[#229ED9]" />
-                    <span>{texts.btnOpenBot}</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
+                    <Send className="w-3.5 h-3.5 text-[#229ED9]" />
+                    <span>{texts.btnOpenWeb}</span>
+                    <ExternalLink className="w-3 h-3" />
                   </a>
                 )}
 
                 <button
                   type="button"
                   onClick={handleClose}
-                  className="w-full py-2.5 text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                  className="w-full py-2 text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
                 >
                   {texts.cancel}
                 </button>
               </div>
 
               {/* Security Footer */}
-              <div className="pt-2 flex items-center justify-center gap-2 text-[11px] text-gray-400">
+              <div className="pt-1 flex items-center justify-center gap-2 text-[11px] text-gray-400">
                 <ShieldCheck className="w-3.5 h-3.5 text-sky-500 shrink-0" />
                 <span>{texts.security}</span>
               </div>
