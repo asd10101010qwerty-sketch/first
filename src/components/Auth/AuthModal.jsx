@@ -63,34 +63,30 @@ export const AuthModal = () => {
     security: isRu ? "Официальный бот авторизации Sprint Marketplace" : isUz ? "Sprint Marketplace rasmiy avtorizatsiya boti" : "Official Sprint Marketplace Auth Bot"
   };
 
-  // Poll ONLY for this device's unique sessionId
+  // Poll Global Cloud API + Local status
   useEffect(() => {
     if (step === 'waiting' && currentSessionId) {
       const checkAuthStatus = async () => {
         try {
-          const res = await fetch(`/telegram_auth_status.json?t=${Date.now()}`);
-          if (res.ok) {
-            const data = await res.json();
-            const sessionData = data[currentSessionId];
+          const sessionData = await telegramAuthService.checkSessionStatus(currentSessionId);
 
-            if (sessionData && sessionData.authenticated && !sessionData.consumed) {
-              clearInterval(pollingIntervalRef.current);
-              
-              const cleanPhone = (sessionData.phone || '').replace(/[^\d]/g, '');
-              const isCreatorPhone = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
-              
-              // Set creator name strictly to Sprint383
-              const loggedName = isCreatorPhone ? 'Sprint383' : (sessionData.userName || 'Пользователь');
-              const loggedPhone = sessionData.phone || '+998 94 939 25 21';
+          if (sessionData && sessionData.authenticated) {
+            clearInterval(pollingIntervalRef.current);
+            
+            const cleanPhone = (sessionData.phone || '').replace(/[^\d]/g, '');
+            const isCreatorPhone = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
+            
+            // Set creator name strictly to Sprint383
+            const loggedName = isCreatorPhone ? 'Sprint383' : (sessionData.userName || 'Пользователь');
+            const loggedPhone = sessionData.phone || '+998 94 939 25 21';
 
-              loginUser(loggedPhone, loggedName);
-              setIsAuthOpen(false);
-              setStep('initial');
-              setTelegramLink(null);
-              setCurrentSessionId(null);
+            loginUser(loggedPhone, loggedName);
+            setIsAuthOpen(false);
+            setStep('initial');
+            setTelegramLink(null);
+            setCurrentSessionId(null);
 
-              showToast(isRu ? `Здравствуйте, ${loggedName}!` : `Salom, ${loggedName}!`, "success");
-            }
+            showToast(isRu ? `Здравствуйте, ${loggedName}!` : `Salom, ${loggedName}!`, "success");
           }
         } catch {
           // ignore
@@ -115,10 +111,8 @@ export const AuthModal = () => {
 
   const handleStartTelegram = async () => {
     try {
-      const newSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-      setCurrentSessionId(newSessionId);
-
-      const result = await telegramAuthService.sendMessengerCode(newSessionId, '', language || 'ru');
+      const result = await telegramAuthService.createCloudSession();
+      setCurrentSessionId(result.sessionId);
       setTelegramLink(result.telegramDeepLink);
       setStep('waiting');
 

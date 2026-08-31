@@ -1,6 +1,6 @@
 /**
- * Multi-Device Isolated Telegram Bot Worker for SprintAuthBot
- * Each device has its own unique sessionId so devices never mix up accounts!
+ * Multi-Device Isolated & Cloud-Synced Telegram Bot Worker for SprintAuthBot
+ * Works with Localhost and Deployed Cloud Sites (Google / Firebase / Vercel).
  */
 
 import fs from 'fs';
@@ -8,6 +8,7 @@ import path from 'path';
 
 const BOT_TOKEN = "8607198704:AAH630BQCJieHm-Ln3QrzGne_ULh8U4gT7Q";
 const BASE_URL = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const CLOUD_API_URL = "https://api.restful-api.dev/objects";
 
 const AUTH_STATUS_FILE = path.resolve('./public/telegram_auth_status.json');
 
@@ -24,13 +25,49 @@ function getSessionsMap() {
   return {};
 }
 
-function saveSession(sessionId, sessionData) {
+function saveLocalSession(sessionId, sessionData) {
   try {
     const map = getSessionsMap();
     map[sessionId] = sessionData;
     fs.writeFileSync(AUTH_STATUS_FILE, JSON.stringify(map, null, 2));
   } catch (err) {
-    console.error("Error saving session:", err);
+    console.error("Error saving local session:", err);
+  }
+}
+
+// Global Cloud Sync: Saves session to the global cloud API so Google-hosted site receives it instantly
+async function saveGlobalSession(sessionId, sessionData) {
+  // 1. Save locally
+  saveLocalSession(sessionId, sessionData);
+
+  // 2. Save to Global Cloud
+  if (sessionId && sessionId !== 'default') {
+    try {
+      const res = await fetch(`${CLOUD_API_URL}/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'sprint_auth',
+          data: sessionData
+        })
+      });
+
+      if (res.ok) {
+        console.log(`[GLOBAL CLOUD SYNC SUCCESS] Session: ${sessionId} pushed to global cloud.`);
+      } else {
+        // If not exists on cloud yet, create it
+        await fetch(CLOUD_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: sessionId,
+            data: sessionData
+          })
+        });
+      }
+    } catch (err) {
+      console.warn("[CLOUD SYNC WARNING]", err.message);
+    }
   }
 }
 
@@ -102,26 +139,27 @@ function getContactKeyboard(lang = 'ru') {
   };
 }
 
-let lastUpdateId = 0;
-
-async function sendTelegramMessage(chatId, text, replyMarkup = null) {
+async function sendTelegramMessage(chatId, text, extra = {}) {
   try {
     const payload = {
       chat_id: chatId,
       text: text,
-      parse_mode: 'HTML'
+      parse_mode: 'HTML',
+      ...extra
     };
-    if (replyMarkup) {
-      payload.reply_markup = replyMarkup;
+
+    if (extra.remove_keyboard) {
+      payload.reply_markup = { remove_keyboard: true };
     }
 
-    await fetch(`${BASE_URL}/sendMessage`, {
+    const res = await fetch(`${BASE_URL}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    return await res.json();
   } catch (err) {
-    console.error("SendMessage error:", err);
+    console.error("Error sending TG message:", err);
   }
 }
 
@@ -137,65 +175,76 @@ async function answerCallbackQuery(callbackQueryId) {
   }
 }
 
+let lastUpdateId = 0;
+
 async function pollUpdates() {
   try {
     const response = await fetch(`${BASE_URL}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`);
-    if (!response.ok) return;
-
     const data = await response.json();
-    if (!data.ok || !data.result) return;
 
-    for (const update of data.result) {
-      lastUpdateId = update.update_id;
+    if (data.ok && Array.isArray(data.result)) {
+      for (const update of data.result) {
+        lastUpdateId = update.update_id;
 
-      // 1. Language selected by user
-      if (update.callback_query) {
-        const query = update.callback_query;
-        const chatId = query.message.chat.id;
-        const callbackData = query.data;
+        // 1. Handle Inline Keyboard Callbacks (Language selection)
+        if (update.callback_query) {
+          const cb = update.callback_query;
+          const chatId = cb.message.chat.id;
+          const data = cb.data; // 'lang_uz' | 'lang_ru' | 'lang_en'
+          const lang = data.replace('lang_', '');
 
-        if (callbackData.startsWith('lang_')) {
-          const selectedLang = callbackData.replace('lang_', '');
-          await answerCallbackQuery(query.id);
+          await answerCallbackQuery(cb.id);
 
-          const currentState = userStates.get(chatId) || { sessionId: 'default' };
-          userStates.set(chatId, {
-            ...currentState,
-            step: 'awaiting_name',
-            lang: selectedLang,
-            name: ''
-          });
+          const state = userStates.get(chatId) || { sessionId: 'default' };
+          state.lang = lang;
+          state.step = 'awaiting_name';
+          userStates.set(chatId, state);
 
-          const dict = texts[selectedLang] || texts.ru;
-          await sendTelegramMessage(chatId, dict.askName, { remove_keyboard: true });
+          const dict = texts[lang] || texts.ru;
+          await sendTelegramMessage(chatId, dict.askName);
+          continue;
         }
-        continue;
-      }
 
-      // 2. Incoming Messages
-      if (update.message) {
+        if (!update.message) continue;
         const message = update.message;
         const chatId = message.chat.id;
-        const state = userStates.get(chatId) || { step: 'initial', lang: 'ru', name: '', sessionId: 'default' };
-        const dict = texts[state.lang] || texts.ru;
 
-        // /start command (Extract unique device sessionId: /start auth_sess_123456)
+        // 2. Handle /start command with session token (e.g. /start auth_sess_123 or /start auth_ff808181a058d43f01a05902ad5401ce)
         if (message.text && message.text.startsWith('/start')) {
-          let extractedSessionId = 'default';
           const parts = message.text.split(' ');
-          if (parts.length > 1) {
+          let extractedSessionId = 'default';
+          if (parts.length > 1 && parts[1].startsWith('auth_')) {
             extractedSessionId = parts[1].replace('auth_', '').trim();
           }
 
-          userStates.set(chatId, { 
-            step: 'initial', 
-            lang: 'ru', 
-            name: '', 
-            sessionId: extractedSessionId 
+          userStates.set(chatId, {
+            step: 'awaiting_lang',
+            sessionId: extractedSessionId,
+            lang: 'ru',
+            name: ''
           });
 
-          console.log(`[START RECEIVED] User: ${message.from?.first_name} | Session: ${extractedSessionId}`);
-          await sendTelegramMessage(chatId, texts.ru.chooseLang, languageInlineKeyboard);
+          console.log(`[START RECEIVED] User: ${message.from.first_name || 'Guest'} | Session: ${extractedSessionId}`);
+
+          await sendTelegramMessage(chatId, texts.ru.chooseLang, {
+            reply_markup: languageInlineKeyboard
+          });
+          continue;
+        }
+
+        const state = userStates.get(chatId);
+        if (!state) {
+          // If message arrived without /start, initiate prompt
+          userStates.set(chatId, { step: 'awaiting_lang', sessionId: 'default', lang: 'ru' });
+          await sendTelegramMessage(chatId, texts.ru.chooseLang, { reply_markup: languageInlineKeyboard });
+          continue;
+        }
+
+        const dict = texts[state.lang] || texts.ru;
+
+        // If in awaiting_lang but user typed text instead of clicking buttons
+        if (state.step === 'awaiting_lang') {
+          await sendTelegramMessage(chatId, texts.ru.chooseLang, { reply_markup: languageInlineKeyboard });
           continue;
         }
 
@@ -210,8 +259,8 @@ async function pollUpdates() {
           const isCreator = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
           const finalUserName = isCreator ? 'Sprint383' : (state.name || message.contact.first_name || message.from.first_name || 'Пользователь');
 
-          // Save session data specifically for this device's sessionId
-          saveSession(state.sessionId, {
+          // Save session data globally for this device's sessionId
+          await saveGlobalSession(state.sessionId, {
             authenticated: true,
             userName: finalUserName,
             phone: phoneNumber,
@@ -252,7 +301,7 @@ async function pollUpdates() {
             const isCreator = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
             const finalUserName = isCreator ? 'Sprint383' : (state.name || message.from.first_name || 'Пользователь');
 
-            saveSession(state.sessionId, {
+            await saveGlobalSession(state.sessionId, {
               authenticated: true,
               userName: finalUserName,
               phone: phoneNumber,
@@ -268,17 +317,17 @@ async function pollUpdates() {
           }
 
           // Fallback prompt
-          await sendTelegramMessage(chatId, texts.ru.chooseLang, languageInlineKeyboard);
+          await sendTelegramMessage(chatId, texts.ru.chooseLang, { reply_markup: languageInlineKeyboard });
         }
       }
     }
-  } catch (error) {
+  } catch {
     // retry
   }
 }
 
 async function startBot() {
-  console.log("🤖 Multi-Device Isolated SprintAuthBot Worker is active...");
+  console.log("🤖 Multi-Device & Cloud-Synced SprintAuthBot Worker is active...");
   while (true) {
     await pollUpdates();
     await new Promise(r => setTimeout(r, 1000));
