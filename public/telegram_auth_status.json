@@ -1,18 +1,18 @@
 {
-  "ff808181a058d43f01a05904234901d3": {
+  "sess_1788371893243_81o3e": {
     "authenticated": true,
     "userName": "Sprint383",
     "phone": "+998949392521",
     "lang": "ru",
-    "timestamp": 1788199871641,
+    "timestamp": 1788371907857,
     "consumed": false
   },
-  "ff808181a058d43f01a0590506db01d6": {
+  "sess_1788372103670_tytmk": {
     "authenticated": true,
     "userName": "Sprint383",
-    "phone": "+998946474403",
+    "phone": "+998949392521",
     "lang": "ru",
-    "timestamp": 1788199920222,
+    "timestamp": 1788372122188,
     "consumed": false
   }
 }

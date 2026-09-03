@@ -144,11 +144,21 @@ async function sendTelegramMessage(chatId, text, extra = {}) {
     const payload = {
       chat_id: chatId,
       text: text,
-      parse_mode: 'HTML',
-      ...extra
+      parse_mode: 'HTML'
     };
 
-    if (extra.remove_keyboard) {
+    // Correctly wrap keyboard objects into reply_markup for Telegram API
+    if (extra.reply_markup) {
+      payload.reply_markup = extra.reply_markup;
+    } else if (extra.inline_keyboard) {
+      payload.reply_markup = { inline_keyboard: extra.inline_keyboard };
+    } else if (extra.keyboard) {
+      payload.reply_markup = {
+        keyboard: extra.keyboard,
+        resize_keyboard: extra.resize_keyboard !== false,
+        one_time_keyboard: extra.one_time_keyboard !== false
+      };
+    } else if (extra.remove_keyboard) {
       payload.reply_markup = { remove_keyboard: true };
     }
 
@@ -157,7 +167,11 @@ async function sendTelegramMessage(chatId, text, extra = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    return await res.json();
+    const result = await res.json();
+    if (!result.ok) {
+      console.error("[TG API ERROR]", JSON.stringify(result));
+    }
+    return result;
   } catch (err) {
     console.error("Error sending TG message:", err);
   }

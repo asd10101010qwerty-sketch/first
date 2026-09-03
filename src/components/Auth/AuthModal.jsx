@@ -1,18 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState } from 'react';
 import { 
   X, 
-  Send, 
-  ExternalLink, 
+  Mail, 
   CheckCircle2, 
   ShieldCheck, 
   Loader2,
   Crown,
   ChevronRight,
-  Smartphone,
-  User as UserIcon
+  User as UserIcon,
+  ArrowLeft,
+  KeyRound
 } from 'lucide-react';
 import { useShop } from '../../context/ShopContext';
-import { telegramAuthService } from '../../services/telegramAuthService';
+import { emailAuthService, CREATOR_EMAIL } from '../../services/emailAuthService';
 
 export const AuthModal = () => {
   const {
@@ -28,178 +28,146 @@ export const AuthModal = () => {
     showToast
   } = useShop();
 
-  const [step, setStep] = useState('initial'); // 'initial' | 'waiting'
-  const [currentSessionId, setCurrentSessionId] = useState(null);
-  const [telegramLink, setTelegramLink] = useState(null);
-  const [telegramNativeLink, setTelegramNativeLink] = useState(null);
-  const pollingIntervalRef = useRef(null);
+  const [step, setStep] = useState('form'); // 'form' | 'code' | 'sending'
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [realCode, setRealCode] = useState(null); // fallback display if email not sent
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const isRu = language === 'ru';
   const isUz = language === 'uz';
 
   const displayName = isAdmin ? 'Sprint383' : user.name;
 
-  const texts = {
-    titleInitial: isRu ? "Вход через Telegram" : isUz ? "Telegram orqali kirish" : "Login with Telegram",
-    descInitial: isRu 
-      ? "Авторизуйтесь быстро и безопасно через официальный бот @SprintAuthBot"
+  const t = {
+    title: isRu ? "Вход в аккаунт" : isUz ? "Hisobga kirish" : "Sign In",
+    desc: isRu 
+      ? "Введите ваше имя и email для входа" 
       : isUz 
-      ? "@SprintAuthBot orqali xavfsiz va tez tizimga kiring"
-      : "Log in quickly and securely via the official @SprintAuthBot",
-    btnStartTelegram: isRu ? "Войти через Telegram" : isUz ? "Telegram orqali kirish" : "Log in with Telegram",
+      ? "Kirish uchun ismingiz va emailingizni kiriting" 
+      : "Enter your name and email to sign in",
+    namePlaceholder: isRu ? "Ваше имя" : isUz ? "Ismingiz" : "Your name",
+    emailPlaceholder: isRu ? "Ваш email" : isUz ? "Emailingiz" : "Your email",
+    btnSendCode: isRu ? "Получить код" : isUz ? "Kodni olish" : "Get Code",
     
-    titleWaiting: isRu ? "Ожидание..." : isUz ? "Kutilmoqda..." : "Waiting...",
-    descWaiting: isRu 
-      ? "В боте @SprintAuthBot выберите язык, напишите ваше имя и отправьте контакт:"
+    codeTitle: isRu ? "Введите код" : isUz ? "Kodni kiriting" : "Enter Code",
+    codeDesc: isRu 
+      ? "Мы отправили 6-значный код на вашу почту:" 
       : isUz 
-      ? "@SprintAuthBot da tilni tanlang, ismingizni yozing va kontaktni yuboring:"
-      : "In @SprintAuthBot, choose your language, write your name, and share your contact:",
+      ? "Biz 6 raqamli kodni emailingizga yubordik:" 
+      : "We sent a 6-digit code to your email:",
+    codePlaceholder: "000000",
+    btnVerify: isRu ? "Подтвердить" : isUz ? "Tasdiqlash" : "Verify",
+    btnResend: isRu ? "Отправить заново" : isUz ? "Qayta yuborish" : "Resend",
+    btnBack: isRu ? "Назад" : isUz ? "Orqaga" : "Back",
     
-    btnOpenBot: isRu ? "Открыть Telegram на телефоне" : isUz ? "Telefonda Telegramni ochish" : "Open Telegram on Phone",
-    btnOpenWeb: isRu ? "Открыть в браузере" : isUz ? "Brauzerda ochish" : "Open in Browser",
-    cancel: isRu ? "Отмена" : isUz ? "Bekor qilish" : "Cancel",
-    verified: isRu ? "Авторизован через Telegram" : isUz ? "Telegram orqali tasdiqlangan" : "Verified via Telegram",
+    errorName: isRu ? "Введите имя" : isUz ? "Ismni kiriting" : "Enter your name",
+    errorEmail: isRu ? "Введите email" : isUz ? "Emailni kiriting" : "Enter email",
+    errorEmailInvalid: isRu ? "Неверный формат email" : isUz ? "Email formati noto'g'ri" : "Invalid email format",
+    errorCode: isRu ? "Неверный код" : isUz ? "Kod noto'g'ri" : "Invalid code",
+    errorCodeEmpty: isRu ? "Введите код" : isUz ? "Kodni kiriting" : "Enter the code",
+
+    verified: isRu ? "Авторизован" : isUz ? "Tasdiqlangan" : "Verified",
     creatorBadge: isRu ? "👑 Создатель Sprint" : isUz ? "👑 Sprint Yaratuvchisi" : "👑 Sprint Creator",
     btnOpenAdmin: isRu ? "👑 Войти в панель Создателя" : isUz ? "👑 Yaratuvchi paneliga kirish" : "👑 Open Creator Panel",
     logout: isRu ? "Выйти из аккаунта" : isUz ? "Profildan chiqish" : "Log out",
     close: isRu ? "Закрыть" : isUz ? "Yopish" : "Close",
-    security: isRu ? "Официальный бот авторизации Sprint Marketplace" : isUz ? "Sprint Marketplace rasmiy avtorizatsiya boti" : "Official Sprint Marketplace Auth Bot"
+    security: isRu ? "Защищённая авторизация Sprint" : isUz ? "Sprint xavfsiz avtorizatsiya" : "Secure Sprint Authentication",
+    
+    fallbackCodeMsg: isRu 
+      ? "Ваш код подтверждения:" 
+      : isUz 
+      ? "Tasdiqlash kodingiz:" 
+      : "Your verification code:"
   };
-
-  // Core Auth Verification Check
-  const checkAuthStatus = useCallback(async (sessionIdToCheck) => {
-    const targetSessionId = sessionIdToCheck || currentSessionId;
-    if (!targetSessionId) return;
-
-    try {
-      const sessionData = await telegramAuthService.checkSessionStatus(targetSessionId);
-
-      if (sessionData && sessionData.authenticated) {
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-        }
-
-        const cleanPhone = (sessionData.phone || '').replace(/[^\d]/g, '');
-        const isCreatorPhone = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
-        
-        const loggedName = isCreatorPhone ? 'Sprint383' : (sessionData.userName || 'Пользователь');
-        const loggedPhone = sessionData.phone || '+998 94 939 25 21';
-
-        loginUser(loggedPhone, loggedName);
-        setIsAuthOpen(false);
-        setStep('initial');
-        setTelegramLink(null);
-        setTelegramNativeLink(null);
-        setCurrentSessionId(null);
-
-        try {
-          localStorage.removeItem('sprint_pending_session_id');
-        } catch {
-          // ignore
-        }
-
-        showToast(isRu ? `Здравствуйте, ${loggedName}!` : `Salom, ${loggedName}!`, "success");
-      }
-    } catch {
-      // ignore
-    }
-  }, [currentSessionId, isRu, loginUser, setIsAuthOpen, showToast]);
-
-  // Polling Loop + Mobile Visibility/Focus Change detection
-  useEffect(() => {
-    if (step === 'waiting' && currentSessionId) {
-      pollingIntervalRef.current = setInterval(() => checkAuthStatus(currentSessionId), 700);
-
-      // Instant check when user switches back from Telegram app to mobile browser
-      const handleVisibilityChange = () => {
-        if (document.visibilityState === 'visible') {
-          checkAuthStatus(currentSessionId);
-        }
-      };
-
-      const handleWindowFocus = () => {
-        checkAuthStatus(currentSessionId);
-      };
-
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      window.addEventListener('focus', handleWindowFocus);
-
-      return () => {
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-        }
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('focus', handleWindowFocus);
-      };
-    } else {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-    }
-
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-    };
-  }, [step, currentSessionId, checkAuthStatus]);
-
-  // Check cached session on startup for mobile page reload
-  useEffect(() => {
-    if (!user.isLoggedIn) {
-      try {
-        const cached = localStorage.getItem('sprint_pending_session_id');
-        if (cached) {
-          checkAuthStatus(cached);
-        }
-      } catch {
-        // ignore
-      }
-    }
-  }, [user.isLoggedIn, checkAuthStatus]);
 
   if (!isAuthOpen) return null;
 
-  const handleStartTelegram = async () => {
-    try {
-      const result = await telegramAuthService.createCloudSession();
-      setCurrentSessionId(result.sessionId);
-      setTelegramLink(result.telegramDeepLink);
-      setTelegramNativeLink(result.telegramNativeLink);
-      setStep('waiting');
-
-      // Check if mobile device
-      const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(navigator.userAgent);
-      
-      if (isMobile && result.telegramNativeLink) {
-        // On mobile, trigger direct app opening
-        window.location.href = result.telegramNativeLink;
-        setTimeout(() => {
-          window.open(result.telegramDeepLink, '_blank');
-        }, 500);
-      } else {
-        // On desktop, open in new tab
-        window.open(result.telegramDeepLink, '_blank');
-      }
-    } catch {
-      showToast(isRu ? "Ошибка открытия Telegram" : "Telegram ochishda xatolik", "error");
-    }
-  };
-
   const handleClose = () => {
     setIsAuthOpen(false);
-    setStep('initial');
-    setTelegramLink(null);
-    setTelegramNativeLink(null);
-    setCurrentSessionId(null);
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
+    setStep('form');
+    setName('');
+    setEmail('');
+    setCode('');
+    setRealCode(null);
+    setError('');
+    setLoading(false);
   };
 
   const handleOpenCreatorPanel = () => {
     setIsAuthOpen(false);
     setIsAdminOpen(true);
+  };
+
+  const validateEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+  const handleSendCode = async () => {
+    setError('');
+    if (!name.trim()) { setError(t.errorName); return; }
+    if (!email.trim()) { setError(t.errorEmail); return; }
+    if (!validateEmail(email.trim())) { setError(t.errorEmailInvalid); return; }
+
+    setLoading(true);
+    try {
+      const result = await emailAuthService.sendVerificationCode(name.trim(), email.trim());
+      
+      if (result.success) {
+        setStep('code');
+        
+        // If email was NOT sent (EmailJS not configured), show the code as fallback
+        if (!result.emailSent) {
+          setRealCode(result.code);
+        } else {
+          setRealCode(null);
+        }
+      }
+    } catch {
+      setError(isRu ? "Ошибка отправки" : "Yuborishda xatolik");
+    }
+    setLoading(false);
+  };
+
+  const handleVerifyCode = async () => {
+    setError('');
+    if (!code.trim() || code.trim().length < 4) { setError(t.errorCodeEmpty); return; }
+
+    setLoading(true);
+    try {
+      const result = await emailAuthService.verifyCode(code.trim(), email.trim());
+      
+      if (result.verified) {
+        const finalName = result.userName || name.trim();
+        const finalEmail = result.email || email.trim().toLowerCase();
+        
+        // Use email as phone for the login system
+        loginUser(finalEmail, finalName);
+        handleClose();
+        showToast(isRu ? `Добро пожаловать, ${finalName}!` : `Xush kelibsiz, ${finalName}!`, "success");
+      } else {
+        setError(t.errorCode);
+      }
+    } catch {
+      setError(t.errorCode);
+    }
+    setLoading(false);
+  };
+
+  const handleResend = async () => {
+    setCode('');
+    setError('');
+    setLoading(true);
+    try {
+      const result = await emailAuthService.sendVerificationCode(name.trim(), email.trim());
+      if (!result.emailSent) {
+        setRealCode(result.code);
+      }
+      showToast(isRu ? "Код отправлен заново" : "Kod qayta yuborildi", "success");
+    } catch {
+      // ignore
+    }
+    setLoading(false);
   };
 
   return (
@@ -222,12 +190,12 @@ export const AuthModal = () => {
           </button>
 
           {user.isLoggedIn ? (
-            /* Logged In User Profile Card */
+            /* ═══════ LOGGED IN PROFILE ═══════ */
             <div className="p-6 sm:p-8 text-center space-y-5">
               <div className={`w-16 h-16 rounded-full text-white font-black text-2xl flex items-center justify-center mx-auto shadow-lg ${
                 isAdmin 
                   ? 'bg-gradient-to-tr from-amber-500 via-[#7000FF] to-[#ff4d6d] shadow-purple-500/30' 
-                  : 'bg-gradient-to-tr from-[#2AABEE] to-[#229ED9] shadow-sky-500/25'
+                  : 'bg-gradient-to-tr from-[#7000FF] to-[#9333ea] shadow-purple-500/25'
               }`}>
                 {isAdmin ? <Crown className="w-8 h-8 text-amber-300 animate-pulse" /> : displayName.charAt(0).toUpperCase()}
               </div>
@@ -237,32 +205,29 @@ export const AuthModal = () => {
                   <h3 className="text-xl font-black text-gray-900 dark:text-white">
                     {displayName}
                   </h3>
-                  {isAdmin && (
-                    <span className="text-amber-500 text-xs" title="Владелец">👑</span>
-                  )}
+                  {isAdmin && <span className="text-amber-500 text-xs">👑</span>}
                 </div>
                 <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5">{user.phone}</p>
                 
                 <span className={`inline-flex items-center gap-1.5 mt-2.5 text-xs font-bold px-3 py-1 rounded-full ${
                   isAdmin 
                     ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30' 
-                    : 'bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300'
+                    : 'bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300'
                 }`}>
                   {isAdmin ? (
                     <>
                       <Crown className="w-3.5 h-3.5 text-amber-500" />
-                      <span>{texts.creatorBadge}</span>
+                      <span>{t.creatorBadge}</span>
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-                      <span>{texts.verified}</span>
+                      <CheckCircle2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                      <span>{t.verified}</span>
                     </>
                   )}
                 </span>
               </div>
 
-              {/* EXCLUSIVE CREATOR ADMIN PANEL BUTTON (ONLY SHOWN IN PROFILE FOR SPRINT383) */}
               {isAdmin && (
                 <div className="pt-2">
                   <button
@@ -271,7 +236,7 @@ export const AuthModal = () => {
                   >
                     <div className="flex items-center gap-2">
                       <Crown className="w-5 h-5 text-amber-300" />
-                      <span>{texts.btnOpenAdmin}</span>
+                      <span>{t.btnOpenAdmin}</span>
                     </div>
                     <ChevronRight className="w-4 h-4 text-white group-hover:translate-x-1 transition-transform" />
                   </button>
@@ -279,119 +244,165 @@ export const AuthModal = () => {
               )}
 
               <div className="pt-3 border-t border-gray-200 dark:border-[#2a2a36] space-y-2">
-                <button
-                  onClick={logoutUser}
-                  className="w-full bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 font-bold py-2.5 rounded-xl text-xs transition-colors"
-                >
-                  {texts.logout}
+                <button onClick={logoutUser} className="w-full bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 font-bold py-2.5 rounded-xl text-xs transition-colors">
+                  {t.logout}
                 </button>
-                <button
-                  onClick={handleClose}
-                  className="w-full bg-gray-100 dark:bg-[#282834] hover:bg-gray-200 dark:hover:bg-[#323242] text-gray-800 dark:text-gray-200 font-bold py-2.5 rounded-xl text-xs transition-colors"
-                >
-                  {texts.close}
+                <button onClick={handleClose} className="w-full bg-gray-100 dark:bg-[#282834] hover:bg-gray-200 dark:hover:bg-[#323242] text-gray-800 dark:text-gray-200 font-bold py-2.5 rounded-xl text-xs transition-colors">
+                  {t.close}
                 </button>
               </div>
             </div>
-          ) : step === 'initial' ? (
-            /* Step 1: 1-Click Telegram Login Button */
+
+          ) : step === 'form' ? (
+            /* ═══════ STEP 1: NAME + EMAIL FORM ═══════ */
             <div className="p-6 sm:p-8">
-              
               <div className="text-center mb-6">
-                <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#2AABEE] to-[#229ED9] text-white flex items-center justify-center mx-auto mb-4 shadow-xl shadow-sky-500/30">
-                  <Send className="w-8 h-8 ml-0.5" />
+                <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#7000FF] to-[#9333ea] text-white flex items-center justify-center mx-auto mb-4 shadow-xl shadow-purple-500/30">
+                  <Mail className="w-8 h-8" />
                 </div>
-                <h2 className="text-xl font-black text-gray-900 dark:text-white">
-                  {texts.titleInitial}
-                </h2>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 max-w-xs mx-auto">
-                  {texts.descInitial}
-                </p>
+                <h2 className="text-xl font-black text-gray-900 dark:text-white">{t.title}</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 max-w-xs mx-auto">{t.desc}</p>
               </div>
 
-              <div className="space-y-4">
-                <button
-                  onClick={handleStartTelegram}
-                  className="w-full bg-gradient-to-r from-[#2AABEE] via-[#229ED9] to-[#1c8ec7] hover:brightness-105 active:scale-95 text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-xl shadow-sky-500/25 transition-all cursor-pointer"
-                >
-                  <Send className="w-5 h-5" />
-                  <span>{texts.btnStartTelegram}</span>
-                </button>
-
-                <div className="text-center">
-                  <span className="text-[11px] text-gray-400">
-                    @{telegramAuthService.botUsername || "SprintAuthBot"}
-                  </span>
+              <div className="space-y-3">
+                {/* Name Input */}
+                <div className="relative">
+                  <UserIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => { setName(e.target.value); setError(''); }}
+                    placeholder={t.namePlaceholder}
+                    className="w-full pl-10 pr-4 py-3.5 bg-gray-50 dark:bg-[#232330] border border-gray-200 dark:border-[#333345] rounded-xl text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500 transition-all"
+                    autoComplete="name"
+                  />
                 </div>
+
+                {/* Email Input */}
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                    placeholder={t.emailPlaceholder}
+                    className="w-full pl-10 pr-4 py-3.5 bg-gray-50 dark:bg-[#232330] border border-gray-200 dark:border-[#333345] rounded-xl text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500 transition-all"
+                    autoComplete="email"
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendCode()}
+                  />
+                </div>
+
+                {/* Error */}
+                {error && (
+                  <p className="text-xs text-rose-500 font-medium px-1">{error}</p>
+                )}
+
+                {/* Submit Button */}
+                <button
+                  onClick={handleSendCode}
+                  disabled={loading}
+                  className="w-full bg-gradient-to-r from-[#7000FF] to-[#9333ea] hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:active:scale-100 text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-xl shadow-purple-500/25 transition-all mt-1 cursor-pointer"
+                >
+                  {loading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      <Mail className="w-5 h-5" />
+                      <span>{t.btnSendCode}</span>
+                    </>
+                  )}
+                </button>
               </div>
 
               {/* Security Footer */}
               <div className="mt-6 pt-4 border-t border-gray-100 dark:border-[#2a2a36] flex items-center justify-center gap-2 text-[11px] text-gray-400 text-center">
-                <ShieldCheck className="w-4 h-4 text-sky-500 shrink-0" />
-                <span>{texts.security}</span>
+                <ShieldCheck className="w-4 h-4 text-purple-500 shrink-0" />
+                <span>{t.security}</span>
               </div>
             </div>
-          ) : (
-            /* Step 2: Animated Spinner + "Ожидание..." with Mobile 1-Tap Buttons */
-            <div className="p-6 sm:p-8 text-center space-y-6 animate-fade-in">
-              
-              {/* Circular Loading Spinner */}
-              <div className="flex flex-col items-center justify-center py-3">
-                <div className="relative flex items-center justify-center">
-                  {/* Outer pulse ring */}
-                  <div className="absolute w-20 h-20 rounded-full border-4 border-sky-400/20 animate-ping"></div>
-                  {/* Main animated spinner */}
-                  <Loader2 className="w-16 h-16 text-[#2AABEE] animate-spin" />
-                </div>
 
-                <h3 className="text-xl font-black text-gray-900 dark:text-white mt-6">
-                  {texts.titleWaiting}
-                </h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-xs mx-auto">
-                  {texts.descWaiting}
-                </p>
+          ) : (
+            /* ═══════ STEP 2: ENTER VERIFICATION CODE ═══════ */
+            <div className="p-6 sm:p-8 animate-fade-in">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#7000FF] to-[#9333ea] text-white flex items-center justify-center mx-auto mb-4 shadow-xl shadow-purple-500/30">
+                  <KeyRound className="w-8 h-8" />
+                </div>
+                <h2 className="text-xl font-black text-gray-900 dark:text-white">{t.codeTitle}</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">{t.codeDesc}</p>
+                <p className="text-xs font-bold text-purple-600 dark:text-purple-400 mt-1">{email}</p>
               </div>
 
-              {/* Mobile Actions: Open Telegram Native App or Web */}
-              <div className="space-y-2.5 pt-2 border-t border-gray-100 dark:border-[#282834]">
-                {telegramNativeLink && (
-                  <a
-                    href={telegramNativeLink}
-                    className="w-full py-3.5 px-4 bg-gradient-to-r from-[#2AABEE] to-[#229ED9] hover:brightness-105 active:scale-95 text-white rounded-2xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-sky-500/20"
-                  >
-                    <Smartphone className="w-4 h-4" />
-                    <span>{texts.btnOpenBot}</span>
-                  </a>
+              {/* Show code as fallback if email not sent */}
+              {realCode && (
+                <div className="mb-4 p-3.5 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 rounded-2xl text-center">
+                  <p className="text-[11px] text-purple-600 dark:text-purple-400 mb-1.5">{t.fallbackCodeMsg}</p>
+                  <p className="text-3xl font-black tracking-[0.3em] text-purple-700 dark:text-purple-300 font-mono">{realCode}</p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {/* Code Input */}
+                <div className="relative">
+                  <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={code}
+                    onChange={(e) => { setCode(e.target.value.replace(/\D/g, '')); setError(''); }}
+                    placeholder={t.codePlaceholder}
+                    className="w-full pl-10 pr-4 py-4 bg-gray-50 dark:bg-[#232330] border border-gray-200 dark:border-[#333345] rounded-xl text-center text-2xl font-black tracking-[0.3em] text-gray-900 dark:text-white placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500 transition-all font-mono"
+                    autoFocus
+                    onKeyDown={(e) => e.key === 'Enter' && handleVerifyCode()}
+                  />
+                </div>
+
+                {/* Error */}
+                {error && (
+                  <p className="text-xs text-rose-500 font-medium px-1">{error}</p>
                 )}
 
-                {telegramLink && (
-                  <a
-                    href={telegramLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-2.5 px-4 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/50 border border-sky-200 dark:border-sky-800 rounded-xl text-xs font-bold text-[#229ED9] flex items-center justify-center gap-2 transition-all shadow-xs"
-                  >
-                    <Send className="w-3.5 h-3.5 text-[#229ED9]" />
-                    <span>{texts.btnOpenWeb}</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                )}
-
+                {/* Verify Button */}
                 <button
-                  type="button"
-                  onClick={handleClose}
-                  className="w-full py-2 text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                  onClick={handleVerifyCode}
+                  disabled={loading || code.length < 4}
+                  className="w-full bg-gradient-to-r from-[#7000FF] to-[#9333ea] hover:brightness-110 active:scale-95 disabled:opacity-60 disabled:active:scale-100 text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-xl shadow-purple-500/25 transition-all cursor-pointer"
                 >
-                  {texts.cancel}
+                  {loading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-5 h-5" />
+                      <span>{t.btnVerify}</span>
+                    </>
+                  )}
                 </button>
+
+                {/* Resend + Back */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setStep('form'); setCode(''); setRealCode(null); setError(''); }}
+                    className="flex-1 py-2.5 text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 bg-gray-100 dark:bg-[#282834] rounded-xl transition-colors flex items-center justify-center gap-1"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    {t.btnBack}
+                  </button>
+                  <button
+                    onClick={handleResend}
+                    disabled={loading}
+                    className="flex-1 py-2.5 text-xs font-bold text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/40 rounded-xl transition-colors"
+                  >
+                    {t.btnResend}
+                  </button>
+                </div>
               </div>
 
               {/* Security Footer */}
-              <div className="pt-1 flex items-center justify-center gap-2 text-[11px] text-gray-400">
-                <ShieldCheck className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                <span>{texts.security}</span>
+              <div className="mt-5 pt-3 border-t border-gray-100 dark:border-[#2a2a36] flex items-center justify-center gap-2 text-[11px] text-gray-400">
+                <ShieldCheck className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                <span>{t.security}</span>
               </div>
-
             </div>
           )}
 
