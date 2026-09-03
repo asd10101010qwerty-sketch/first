@@ -297,7 +297,6 @@ export const ShopProvider = ({ children }) => {
     };
   }, []);
 
-  // Cart operations
   const addToCart = (product, quantity = 1, options = {}) => {
     setCart(prev => {
       const existingIndex = prev.findIndex(item => 
