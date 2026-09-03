@@ -4,6 +4,8 @@ import { pickupPoints } from '../data/pickupPoints';
 import { translations } from '../data/translations';
 import { cloudDatabaseService, CREATOR_EMAIL, CREATOR_PHONE } from '../services/cloudDatabaseService';
 import { liveSyncService } from '../services/liveSyncService';
+import { mockUsers } from '../data/mockUsers';
+import { mockOrders } from '../data/mockOrders';
 
 const ShopContext = createContext();
 
@@ -91,43 +93,52 @@ export const ShopProvider = ({ children }) => {
     }
   });
 
-  // Real Orders history state (clean real orders without fake data)
+  // Merge helper functions for mock and live data
+  const mergeWithMockUsers = (storedList) => {
+    const map = new Map();
+    // 1. Put mock users first
+    mockUsers.forEach(u => map.set((u.phone || u.id).toLowerCase().trim(), u));
+    // 2. Put stored/real users over them
+    if (Array.isArray(storedList)) {
+      storedList.forEach(u => {
+        if (u && (u.phone || u.id)) {
+          map.set((u.phone || u.id).toLowerCase().trim(), u);
+        }
+      });
+    }
+    return Array.from(map.values());
+  };
+
+  const mergeWithMockOrders = (storedList) => {
+    const map = new Map();
+    mockOrders.forEach(o => map.set(o.id, o));
+    if (Array.isArray(storedList)) {
+      storedList.forEach(o => {
+        if (o && o.id) {
+          map.set(o.id, o);
+        }
+      });
+    }
+    return Array.from(map.values());
+  };
+
+  // Orders history state with demo orders and real orders
   const [orders, setOrders] = useState(() => {
     try {
       const saved = localStorage.getItem('sprint_orders');
-      return saved ? JSON.parse(saved) : [];
+      return mergeWithMockOrders(saved ? JSON.parse(saved) : []);
     } catch {
-      return [];
+      return mockOrders;
     }
   });
 
-  // Real Registered Users list (pure real accounts authenticated via Telegram)
+  // Registered Users list with demo customers and real accounts
   const [registeredUsers, setRegisteredUsers] = useState(() => {
     try {
       const saved = localStorage.getItem('sprint_registered_users');
-      return saved ? JSON.parse(saved) : [
-        {
-          id: "usr-creator",
-          name: "Sprint383",
-          phone: "+998 94 939 25 21",
-          registeredAt: new Date().toISOString(),
-          role: "creator",
-          ordersCount: 0,
-          totalSpent: 0
-        }
-      ];
+      return mergeWithMockUsers(saved ? JSON.parse(saved) : []);
     } catch {
-      return [
-        {
-          id: "usr-creator",
-          name: "Sprint383",
-          phone: "+998 94 939 25 21",
-          registeredAt: new Date().toISOString(),
-          role: "creator",
-          ordersCount: 0,
-          totalSpent: 0
-        }
-      ];
+      return mockUsers;
     }
   });
 
@@ -237,32 +248,12 @@ export const ShopProvider = ({ children }) => {
     const unsubscribe = liveSyncService.subscribe((topic, data) => {
       // 1. Live retained users list from WebSocket
       if (topic === 'sprint_market_383/users_state' && Array.isArray(data?.users) && data.users.length > 0) {
-        setRegisteredUsers(prev => {
-          const map = new Map();
-          // Always ensure creator is present
-          map.set(CREATOR_EMAIL.toLowerCase(), {
-            id: 'usr-creator',
-            name: 'Sprint383',
-            phone: CREATOR_EMAIL,
-            role: 'creator',
-            registeredAt: '2026-01-01T00:00:00.000Z',
-            ordersCount: 0,
-            totalSpent: 0
-          });
-          prev.forEach(u => map.set((u.phone || '').toLowerCase().trim(), u));
-          data.users.forEach(u => map.set((u.phone || '').toLowerCase().trim(), u));
-          return Array.from(map.values());
-        });
+        setRegisteredUsers(prev => mergeWithMockUsers([...prev, ...data.users]));
       }
 
       // 2. Live retained orders list from WebSocket
       if (topic === 'sprint_market_383/orders_state' && Array.isArray(data?.orders)) {
-        setOrders(prev => {
-          const map = new Map();
-          prev.forEach(o => map.set(o.id, o));
-          data.orders.forEach(o => map.set(o.id, o));
-          return Array.from(map.values());
-        });
+        setOrders(prev => mergeWithMockOrders([...prev, ...data.orders]));
       }
 
       // 3. Instant Live Events across devices (sub-second)
