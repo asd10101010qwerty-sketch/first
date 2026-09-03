@@ -76,7 +76,7 @@ export const AdminModal = () => {
     tabAnalytics: isRu ? "Доход и Аналитика" : isUz ? "Daromad va Tahlil" : "Revenue & Analytics",
     tabOrders: isRu ? "Реальные Заказы" : isUz ? "Haqiqiy Buyurtmalar" : "Real Orders",
     tabProducts: isRu ? "Товары" : isUz ? "Mahsulotlar" : "Products",
-    tabUsers: isRu ? "Пользователи" : isUz ? "Foydalanuvchilar" : "Users",
+    tabUsers: isRu ? `Пользователи (${registeredUsers.length})` : isUz ? `Foydalanuvchilar (${registeredUsers.length})` : `Users (${registeredUsers.length})`,
     
     totalRevenue: isRu ? "Общий оборот заказов" : isUz ? "Umumiy aylanma daromad" : "Total Order Revenue",
     creatorProfit: isRu ? "Чистая прибыль Sprint383 (15%)" : isUz ? "Sprint383 sof foydasi (15%)" : "Sprint383 Net Profit (15%)",

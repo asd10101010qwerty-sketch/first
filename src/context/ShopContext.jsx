@@ -96,13 +96,17 @@ export const ShopProvider = ({ children }) => {
   // Merge helper functions for mock and live data
   const mergeWithMockUsers = (storedList) => {
     const map = new Map();
-    // 1. Put mock users first
+    // 1. Put mock users (90 clients + 1 creator)
     mockUsers.forEach(u => map.set((u.phone || u.id).toLowerCase().trim(), u));
-    // 2. Put stored/real users over them
+    // 2. Put stored/real users over them, excluding test mom account
     if (Array.isArray(storedList)) {
       storedList.forEach(u => {
         if (u && (u.phone || u.id)) {
-          map.set((u.phone || u.id).toLowerCase().trim(), u);
+          const nameLower = (u.name || '').toLowerCase();
+          const phoneLower = (u.phone || '').toLowerCase();
+          if (!nameLower.includes('ona') && !nameLower.includes('мама') && !phoneLower.includes('mom') && !nameLower.includes('mom')) {
+            map.set(phoneLower || u.id.toLowerCase(), u);
+          }
         }
       });
     }
