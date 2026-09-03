@@ -9,7 +9,7 @@ import emailjs from '@emailjs/browser';
 const CLOUD_API_URL = "https://api.restful-api.dev/objects";
 
 // Creator email for admin access
-export const CREATOR_EMAIL = "sprintmarket383@gmail.com";
+export const CREATOR_EMAIL = "asd10101010qwerty@gmail.com";
 
 // EmailJS configuration — real credentials
 const EMAILJS_CONFIG = {

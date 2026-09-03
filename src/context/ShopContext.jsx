@@ -153,11 +153,11 @@ export const ShopProvider = ({ children }) => {
     }
   });
 
-  // ADMIN AUTHORIZATION: Phone +998949392521 OR email sprintmarket383@gmail.com
+  // ADMIN AUTHORIZATION: Phone +998949392521 OR email asd10101010qwerty@gmail.com
   const normalizePhone = (p) => (p || '').replace(/[^\d]/g, '');
   const isAdmin = Boolean(
     user.isLoggedIn && 
-    (normalizePhone(user.phone).endsWith('949392521') || normalizePhone(user.phone) === '998949392521' || user.phone?.includes('949392521') || user.phone?.toLowerCase() === 'sprintmarket383@gmail.com')
+    (normalizePhone(user.phone).endsWith('949392521') || normalizePhone(user.phone) === '998949392521' || user.phone?.includes('949392521') || user.phone?.toLowerCase() === 'asd10101010qwerty@gmail.com')
   );
 
   // Navigation & Filter states
