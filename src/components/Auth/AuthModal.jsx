@@ -96,6 +96,17 @@ export const AuthModal = () => {
     setLoading(false);
   };
 
+  const handleLogout = () => {
+    logoutUser();
+    setStep('form');
+    setName('');
+    setEmail('');
+    setCode('');
+    setRealCode(null);
+    setError('');
+    setLoading(false);
+  };
+
   const handleOpenCreatorPanel = () => {
     setIsAuthOpen(false);
     setIsAdminOpen(true);
@@ -244,7 +255,7 @@ export const AuthModal = () => {
               )}
 
               <div className="pt-3 border-t border-gray-200 dark:border-[#2a2a36] space-y-2">
-                <button onClick={logoutUser} className="w-full bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 font-bold py-2.5 rounded-xl text-xs transition-colors">
+                <button onClick={handleLogout} className="w-full bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 font-bold py-2.5 rounded-xl text-xs transition-colors">
                   {t.logout}
                 </button>
                 <button onClick={handleClose} className="w-full bg-gray-100 dark:bg-[#282834] hover:bg-gray-200 dark:hover:bg-[#323242] text-gray-800 dark:text-gray-200 font-bold py-2.5 rounded-xl text-xs transition-colors">

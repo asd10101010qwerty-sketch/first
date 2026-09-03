@@ -777,25 +777,27 @@ export const AdminModal = () => {
                   </h4>
                   
                   <div className="divide-y divide-[#242434]">
-                    {registeredUsers.map((usr, i) => (
+                    {registeredUsers.map((usr, i) => {
+                      const isUsrCreator = usr.role === 'creator' || usr.name === 'Sprint383' || (usr.phone && usr.phone.toLowerCase().trim() === 'asd10101010qwerty@gmail.com') || (usr.phone && usr.phone.includes('949392521'));
+                      return (
                       <div key={i} className="py-3.5 flex items-center justify-between gap-3 text-xs">
                         <div className="flex items-center gap-3">
                           <div className={`w-10 h-10 rounded-full font-bold flex items-center justify-center text-sm ${
-                            usr.role === 'creator' || usr.name === 'Sprint383'
+                            isUsrCreator
                               ? 'bg-gradient-to-tr from-amber-500 to-[#7000FF] text-white shadow-md shadow-purple-500/30' 
                               : 'bg-purple-500/20 text-purple-300'
                           }`}>
-                            {usr.role === 'creator' || usr.name === 'Sprint383' ? '👑' : usr.name.charAt(0)}
+                            {isUsrCreator ? '👑' : usr.name.charAt(0)}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-bold text-white text-sm">{usr.name}</span>
+                              <span className="font-bold text-white text-sm">{isUsrCreator ? 'Sprint383' : usr.name}</span>
                               <span className={`text-[10px] px-2 py-0.2 rounded-full font-bold ${
-                                usr.role === 'creator' || usr.name === 'Sprint383'
+                                isUsrCreator
                                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
                                   : 'bg-purple-500/20 text-purple-300'
                               }`}>
-                                {usr.role === 'creator' || usr.name === 'Sprint383' ? labels.userRoleCreator : labels.userRoleCustomer}
+                                {isUsrCreator ? labels.userRoleCreator : labels.userRoleCustomer}
                               </span>
                             </div>
                             <span className="text-gray-400 font-mono text-[11px]">{usr.phone}</span>
@@ -807,7 +809,8 @@ export const AdminModal = () => {
                           <span className="text-[10px] text-gray-400">{labels.ordersCountShort(usr.ordersCount || 0)}</span>
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               </div>

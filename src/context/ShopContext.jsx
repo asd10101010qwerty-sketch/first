@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { products as initialProducts } from '../data/products';
 import { pickupPoints } from '../data/pickupPoints';
 import { translations } from '../data/translations';
+import { cloudDatabaseService, CREATOR_EMAIL, CREATOR_PHONE } from '../services/cloudDatabaseService';
 
 const ShopContext = createContext();
 
@@ -153,11 +154,17 @@ export const ShopProvider = ({ children }) => {
     }
   });
 
-  // ADMIN AUTHORIZATION: Phone +998949392521 OR email asd10101010qwerty@gmail.com
+  // ADMIN AUTHORIZATION: Phone +998949392521 OR email asd10101010qwerty@gmail.com OR name Sprint383
   const normalizePhone = (p) => (p || '').replace(/[^\d]/g, '');
   const isAdmin = Boolean(
     user.isLoggedIn && 
-    (normalizePhone(user.phone).endsWith('949392521') || normalizePhone(user.phone) === '998949392521' || user.phone?.includes('949392521') || user.phone?.toLowerCase() === 'asd10101010qwerty@gmail.com')
+    (
+      normalizePhone(user.phone).endsWith('949392521') || 
+      normalizePhone(user.phone) === '998949392521' || 
+      user.phone?.includes('949392521') || 
+      user.phone?.toLowerCase().trim() === CREATOR_EMAIL ||
+      user.name === 'Sprint383'
+    )
   );
 
   // Navigation & Filter states
@@ -223,6 +230,32 @@ export const ShopProvider = ({ children }) => {
   useEffect(() => {
     localStorage.setItem('sprint_user', JSON.stringify(user));
   }, [user]);
+
+  // Cross-device live synchronization from Global Cloud Database
+  useEffect(() => {
+    let isMounted = true;
+    const syncFromCloud = async () => {
+      try {
+        const cloudUsers = await cloudDatabaseService.getRegisteredUsers();
+        if (isMounted && cloudUsers && Array.isArray(cloudUsers) && cloudUsers.length > 0) {
+          setRegisteredUsers(cloudUsers);
+        }
+        const cloudOrders = await cloudDatabaseService.getOrders();
+        if (isMounted && cloudOrders && Array.isArray(cloudOrders)) {
+          setOrders(cloudOrders);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    syncFromCloud();
+    const syncInterval = setInterval(syncFromCloud, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(syncInterval);
+    };
+  }, []);
 
   // Cart operations
   const addToCart = (product, quantity = 1, options = {}) => {
@@ -290,47 +323,55 @@ export const ShopProvider = ({ children }) => {
   };
 
   // User auth operations
-  const loginUser = (phone, name = 'Foydalanuvchi') => {
-    const cleanPhone = (phone || '').replace(/[^\d]/g, '');
-    const isCreator = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521';
+  const loginUser = (phoneOrEmail, name = 'Foydalanuvchi') => {
+    const cleanPhone = (phoneOrEmail || '').replace(/[^\d]/g, '');
+    const cleanEmail = (phoneOrEmail || '').toLowerCase().trim();
+    const isCreator = cleanPhone.endsWith('949392521') || cleanPhone === '998949392521' || cleanEmail === CREATOR_EMAIL;
     const finalName = isCreator ? 'Sprint383' : name;
 
-    const newUser = { isLoggedIn: true, phone, name: finalName };
+    const newUser = { isLoggedIn: true, phone: phoneOrEmail, name: finalName };
     setUser(newUser);
     localStorage.setItem('sprint_user', JSON.stringify(newUser));
 
-    // Register or update real user in platform database
+    const userRecord = {
+      id: isCreator ? 'usr-creator' : `usr-${Date.now()}`,
+      name: finalName,
+      phone: phoneOrEmail,
+      registeredAt: new Date().toISOString(),
+      role: isCreator ? 'creator' : 'customer',
+      ordersCount: 0,
+      totalSpent: 0
+    };
+
+    // Register or update real user in local platform database
     setRegisteredUsers(prev => {
-      const existsIndex = prev.findIndex(u => u.phone === phone || normalizePhone(u.phone) === cleanPhone);
+      const existsIndex = prev.findIndex(u => (u.phone || '').toLowerCase().trim() === cleanEmail || normalizePhone(u.phone) === cleanPhone);
       if (existsIndex > -1) {
         const updated = [...prev];
         updated[existsIndex].name = finalName;
+        updated[existsIndex].role = isCreator ? 'creator' : updated[existsIndex].role;
         return updated;
       }
-      return [
-        ...prev,
-        {
-          id: `usr-${Date.now()}`,
-          name: finalName,
-          phone,
-          registeredAt: new Date().toISOString(),
-          role: isCreator ? 'creator' : 'customer',
-          ordersCount: 0,
-          totalSpent: 0
-        }
-      ];
+      return [userRecord, ...prev];
+    });
+
+    // Save to Global Cloud Database so creator sees users from all devices immediately
+    cloudDatabaseService.saveUser(userRecord).then(cloudUsers => {
+      if (cloudUsers && Array.isArray(cloudUsers)) {
+        setRegisteredUsers(cloudUsers);
+      }
     });
   };
 
   const logoutUser = () => {
     const cleared = { isLoggedIn: false, phone: '', name: 'Foydalanuvchi' };
     setUser(cleared);
-    localStorage.setItem('sprint_user', JSON.stringify(cleared));
+    localStorage.removeItem('sprint_user');
     setIsAdminOpen(false);
     showToast(t('login'), 'info');
   };
 
-  // Order Placement (Syncs with real user records)
+  // Order Placement (Syncs with real user records and cloud database)
   const placeOrder = (orderData) => {
     const newOrder = {
       id: `ORD-${Math.floor(10000 + Math.random() * 90000)}`,
@@ -343,29 +384,30 @@ export const ShopProvider = ({ children }) => {
     };
 
     setOrders(prev => [newOrder, ...prev]);
+    cloudDatabaseService.saveOrder(newOrder);
 
     // Update real user's total spent & order count
     setRegisteredUsers(prev => {
-      const phoneToMatch = newOrder.customerPhone;
-      const index = prev.findIndex(u => u.phone === phoneToMatch || normalizePhone(u.phone) === normalizePhone(phoneToMatch));
+      const phoneToMatch = (newOrder.customerPhone || '').toLowerCase().trim();
+      const index = prev.findIndex(u => (u.phone || '').toLowerCase().trim() === phoneToMatch || normalizePhone(u.phone) === normalizePhone(phoneToMatch));
       if (index > -1) {
         const updated = [...prev];
         updated[index].ordersCount = (updated[index].ordersCount || 0) + 1;
         updated[index].totalSpent = (updated[index].totalSpent || 0) + (newOrder.totalAmount || 0);
+        cloudDatabaseService.saveUser(updated[index]);
         return updated;
       }
-      return [
-        ...prev,
-        {
-          id: `usr-${Date.now()}`,
-          name: newOrder.customerName,
-          phone: newOrder.customerPhone,
-          registeredAt: new Date().toISOString(),
-          role: 'customer',
-          ordersCount: 1,
-          totalSpent: newOrder.totalAmount || 0
-        }
-      ];
+      const newCustomer = {
+        id: `usr-${Date.now()}`,
+        name: newOrder.customerName,
+        phone: newOrder.customerPhone,
+        registeredAt: new Date().toISOString(),
+        role: 'customer',
+        ordersCount: 1,
+        totalSpent: newOrder.totalAmount || 0
+      };
+      cloudDatabaseService.saveUser(newCustomer);
+      return [newCustomer, ...prev];
     });
 
     clearCart();
@@ -380,6 +422,7 @@ export const ShopProvider = ({ children }) => {
       }
       return order;
     }));
+    cloudDatabaseService.updateOrderStatus(orderId, newStatus);
     showToast(
       language === 'uz' ? `Buyurtma holati "${newStatus}" ga o'zgartirildi` :
       language === 'en' ? `Order status changed to "${newStatus}"` :
@@ -390,6 +433,7 @@ export const ShopProvider = ({ children }) => {
 
   const deleteOrder = (orderId) => {
     setOrders(prev => prev.filter(order => order.id !== orderId));
+    cloudDatabaseService.deleteOrder(orderId);
     showToast(
       language === 'uz' ? `Buyurtma #${orderId} o'chirildi` :
       language === 'en' ? `Order #${orderId} deleted` :
