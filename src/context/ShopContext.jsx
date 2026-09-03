@@ -286,7 +286,8 @@ export const ShopProvider = ({ children }) => {
             if (prev.some(o => o.id === newOrder.id)) return prev;
             return [newOrder, ...prev];
           });
-          showToast(`🛍️ LIVE: Новый заказ #${newOrder.id} на сумму ${formatPrice(newOrder.totalAmount || 0)}!`, 'success');
+          const formattedSum = new Intl.NumberFormat('ru-RU').format(newOrder.totalAmount || 0) + " so'm";
+          showToast(`🛍️ LIVE: Новый заказ #${newOrder.id} на сумму ${formattedSum}!`, 'success');
         }
       }
     });
@@ -294,7 +295,7 @@ export const ShopProvider = ({ children }) => {
     return () => {
       unsubscribe();
     };
-  }, [formatPrice]);
+  }, []);
 
   // Cart operations
   const addToCart = (product, quantity = 1, options = {}) => {
