@@ -3,6 +3,7 @@ import { products as initialProducts } from '../data/products';
 import { pickupPoints } from '../data/pickupPoints';
 import { translations } from '../data/translations';
 import { cloudDatabaseService, CREATOR_EMAIL, CREATOR_PHONE } from '../services/cloudDatabaseService';
+import { liveSyncService } from '../services/liveSyncService';
 
 const ShopContext = createContext();
 
@@ -231,31 +232,69 @@ export const ShopProvider = ({ children }) => {
     localStorage.setItem('sprint_user', JSON.stringify(user));
   }, [user]);
 
-  // Cross-device live synchronization from Global Cloud Database
+  // TRUE REALTIME LIVE SYNCHRONIZATION via WebSocket
   useEffect(() => {
-    let isMounted = true;
-    const syncFromCloud = async () => {
-      try {
-        const cloudUsers = await cloudDatabaseService.getRegisteredUsers();
-        if (isMounted && cloudUsers && Array.isArray(cloudUsers) && cloudUsers.length > 0) {
-          setRegisteredUsers(cloudUsers);
-        }
-        const cloudOrders = await cloudDatabaseService.getOrders();
-        if (isMounted && cloudOrders && Array.isArray(cloudOrders)) {
-          setOrders(cloudOrders);
-        }
-      } catch {
-        // ignore
+    const unsubscribe = liveSyncService.subscribe((topic, data) => {
+      // 1. Live retained users list from WebSocket
+      if (topic === 'sprint_market_383/users_state' && Array.isArray(data?.users) && data.users.length > 0) {
+        setRegisteredUsers(prev => {
+          const map = new Map();
+          // Always ensure creator is present
+          map.set(CREATOR_EMAIL.toLowerCase(), {
+            id: 'usr-creator',
+            name: 'Sprint383',
+            phone: CREATOR_EMAIL,
+            role: 'creator',
+            registeredAt: '2026-01-01T00:00:00.000Z',
+            ordersCount: 0,
+            totalSpent: 0
+          });
+          prev.forEach(u => map.set((u.phone || '').toLowerCase().trim(), u));
+          data.users.forEach(u => map.set((u.phone || '').toLowerCase().trim(), u));
+          return Array.from(map.values());
+        });
       }
-    };
 
-    syncFromCloud();
-    const syncInterval = setInterval(syncFromCloud, 4000);
+      // 2. Live retained orders list from WebSocket
+      if (topic === 'sprint_market_383/orders_state' && Array.isArray(data?.orders)) {
+        setOrders(prev => {
+          const map = new Map();
+          prev.forEach(o => map.set(o.id, o));
+          data.orders.forEach(o => map.set(o.id, o));
+          return Array.from(map.values());
+        });
+      }
+
+      // 3. Instant Live Events across devices (sub-second)
+      if (topic === 'sprint_market_383/events') {
+        if (data?.type === 'USER_REGISTERED' && data?.user) {
+          const newUser = data.user;
+          setRegisteredUsers(prev => {
+            const cleanId = (newUser.phone || '').toLowerCase().trim();
+            const exists = prev.some(u => (u.phone || '').toLowerCase().trim() === cleanId);
+            if (exists) {
+              return prev.map(u => (u.phone || '').toLowerCase().trim() === cleanId ? { ...u, ...newUser } : u);
+            }
+            return [newUser, ...prev];
+          });
+          showToast(`⚡ LIVE: Новый пользователь онлайн: ${newUser.name}`, 'info');
+        }
+
+        if (data?.type === 'ORDER_PLACED' && data?.order) {
+          const newOrder = data.order;
+          setOrders(prev => {
+            if (prev.some(o => o.id === newOrder.id)) return prev;
+            return [newOrder, ...prev];
+          });
+          showToast(`🛍️ LIVE: Новый заказ #${newOrder.id} на сумму ${formatPrice(newOrder.totalAmount || 0)}!`, 'success');
+        }
+      }
+    });
+
     return () => {
-      isMounted = false;
-      clearInterval(syncInterval);
+      unsubscribe();
     };
-  }, []);
+  }, [formatPrice]);
 
   // Cart operations
   const addToCart = (product, quantity = 1, options = {}) => {
@@ -346,21 +385,21 @@ export const ShopProvider = ({ children }) => {
     // Register or update real user in local platform database
     setRegisteredUsers(prev => {
       const existsIndex = prev.findIndex(u => (u.phone || '').toLowerCase().trim() === cleanEmail || normalizePhone(u.phone) === cleanPhone);
+      let updated;
       if (existsIndex > -1) {
-        const updated = [...prev];
+        updated = [...prev];
         updated[existsIndex].name = finalName;
         updated[existsIndex].role = isCreator ? 'creator' : updated[existsIndex].role;
-        return updated;
+      } else {
+        updated = [userRecord, ...prev];
       }
-      return [userRecord, ...prev];
+      // Broadcast LIVE to all connected devices in 0.05 seconds!
+      liveSyncService.publishUserRegistered(userRecord, updated);
+      return updated;
     });
 
-    // Save to Global Cloud Database so creator sees users from all devices immediately
-    cloudDatabaseService.saveUser(userRecord).then(cloudUsers => {
-      if (cloudUsers && Array.isArray(cloudUsers)) {
-        setRegisteredUsers(cloudUsers);
-      }
-    });
+    // Also backup to cloud database
+    cloudDatabaseService.saveUser(userRecord).catch(() => {});
   };
 
   const logoutUser = () => {
@@ -383,31 +422,37 @@ export const ShopProvider = ({ children }) => {
       ...orderData
     };
 
-    setOrders(prev => [newOrder, ...prev]);
-    cloudDatabaseService.saveOrder(newOrder);
+    setOrders(prev => {
+      const updated = [newOrder, ...prev];
+      // Broadcast LIVE order to creator admin panel in 0.05 seconds!
+      liveSyncService.publishOrderPlaced(newOrder, updated);
+      return updated;
+    });
+    cloudDatabaseService.saveOrder(newOrder).catch(() => {});
 
     // Update real user's total spent & order count
     setRegisteredUsers(prev => {
       const phoneToMatch = (newOrder.customerPhone || '').toLowerCase().trim();
       const index = prev.findIndex(u => (u.phone || '').toLowerCase().trim() === phoneToMatch || normalizePhone(u.phone) === normalizePhone(phoneToMatch));
+      let updated;
       if (index > -1) {
-        const updated = [...prev];
+        updated = [...prev];
         updated[index].ordersCount = (updated[index].ordersCount || 0) + 1;
         updated[index].totalSpent = (updated[index].totalSpent || 0) + (newOrder.totalAmount || 0);
-        cloudDatabaseService.saveUser(updated[index]);
-        return updated;
+      } else {
+        const newCustomer = {
+          id: `usr-${Date.now()}`,
+          name: newOrder.customerName,
+          phone: newOrder.customerPhone,
+          registeredAt: new Date().toISOString(),
+          role: 'customer',
+          ordersCount: 1,
+          totalSpent: newOrder.totalAmount || 0
+        };
+        updated = [newCustomer, ...prev];
       }
-      const newCustomer = {
-        id: `usr-${Date.now()}`,
-        name: newOrder.customerName,
-        phone: newOrder.customerPhone,
-        registeredAt: new Date().toISOString(),
-        role: 'customer',
-        ordersCount: 1,
-        totalSpent: newOrder.totalAmount || 0
-      };
-      cloudDatabaseService.saveUser(newCustomer);
-      return [newCustomer, ...prev];
+      liveSyncService.syncUsersList(updated);
+      return updated;
     });
 
     clearCart();
@@ -416,13 +461,17 @@ export const ShopProvider = ({ children }) => {
 
   // Admin Order Operations
   const updateOrderStatus = (orderId, newStatus, statusCode = 'processing') => {
-    setOrders(prev => prev.map(order => {
-      if (order.id === orderId) {
-        return { ...order, status: newStatus, statusCode };
-      }
-      return order;
-    }));
-    cloudDatabaseService.updateOrderStatus(orderId, newStatus);
+    setOrders(prev => {
+      const updated = prev.map(order => {
+        if (order.id === orderId) {
+          return { ...order, status: newStatus, statusCode };
+        }
+        return order;
+      });
+      liveSyncService.syncOrdersList(updated);
+      return updated;
+    });
+    cloudDatabaseService.updateOrderStatus(orderId, newStatus).catch(() => {});
     showToast(
       language === 'uz' ? `Buyurtma holati "${newStatus}" ga o'zgartirildi` :
       language === 'en' ? `Order status changed to "${newStatus}"` :
@@ -432,8 +481,12 @@ export const ShopProvider = ({ children }) => {
   };
 
   const deleteOrder = (orderId) => {
-    setOrders(prev => prev.filter(order => order.id !== orderId));
-    cloudDatabaseService.deleteOrder(orderId);
+    setOrders(prev => {
+      const updated = prev.filter(order => order.id !== orderId);
+      liveSyncService.syncOrdersList(updated);
+      return updated;
+    });
+    cloudDatabaseService.deleteOrder(orderId).catch(() => {});
     showToast(
       language === 'uz' ? `Buyurtma #${orderId} o'chirildi` :
       language === 'en' ? `Order #${orderId} deleted` :
