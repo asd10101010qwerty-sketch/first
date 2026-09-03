@@ -11,12 +11,11 @@ const CLOUD_API_URL = "https://api.restful-api.dev/objects";
 // Creator email for admin access
 export const CREATOR_EMAIL = "sprintmarket383@gmail.com";
 
-// EmailJS configuration
-// To set up: go to emailjs.com → sign up → connect Gmail → create template
+// EmailJS configuration — real credentials
 const EMAILJS_CONFIG = {
-  serviceId: "service_sprint",
-  templateId: "template_sprint_otp",
-  publicKey: "YOUR_PUBLIC_KEY"
+  serviceId: "service_rnz66er",
+  templateId: "template_3vx4uqc",
+  publicKey: "a2Q8zBdk3etZILPf2"
 };
 
 let emailjsInitialized = false;
@@ -66,23 +65,24 @@ class EmailAuthService {
       console.warn("Cloud storage failed:", err);
     }
 
-    // Try to send via EmailJS
+    // Send via EmailJS
     let emailSent = false;
     try {
-      if (!emailjsInitialized && EMAILJS_CONFIG.publicKey !== "YOUR_PUBLIC_KEY") {
+      if (!emailjsInitialized) {
         emailjs.init(EMAILJS_CONFIG.publicKey);
         emailjsInitialized = true;
       }
 
-      if (EMAILJS_CONFIG.publicKey !== "YOUR_PUBLIC_KEY") {
-        await emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateId, {
-          to_email: email,
-          to_name: name,
-          verification_code: code,
-          message: `Your Sprint Marketplace verification code is: ${code}`
-        });
-        emailSent = true;
-      }
+      await emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateId, {
+        to_email: email,
+        to_name: name,
+        passcode: code,
+        otp: code,
+        verification_code: code,
+        message: `Your Sprint Marketplace verification code is: ${code}`
+      });
+      emailSent = true;
+      console.log(`[EMAIL SENT] Code sent to ${email}`);
     } catch (err) {
       console.warn("EmailJS send failed:", err);
     }
@@ -180,3 +180,4 @@ class EmailAuthService {
 }
 
 export const emailAuthService = new EmailAuthService();
+
